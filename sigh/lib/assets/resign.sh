@@ -80,6 +80,8 @@
 #
 # new features June 2021
 # 1. fix the way app entitlements are extracted
+# 2. allow --use-app-entitlements to handle the new types of entitlements released with iOS 13/14 (Sign in with Apple, ClassKit, App Attest, User Fonts, etc.)
+# 3. for legibility, rename App ID Prefix variable and sort lists of entitlements to be merged
 
 # Logging functions
 
@@ -644,9 +646,9 @@ function resign {
         # Get the old and new app identifier (prefix)
         APP_ID_KEY="application-identifier"
         # Extract just the identifier from the value
-        # Use the fact that we are after some identifer, which is always at the start of the string
-        OLD_APP_ID=$(PlistBuddy -c "Print $APP_ID_KEY" "$APP_ENTITLEMENTS" | grep -E '^[A-Z0-9]*' -o | tr -d '\n')
-        NEW_APP_ID=$(PlistBuddy -c "Print $APP_ID_KEY" "$PROFILE_ENTITLEMENTS" | grep -E '^[A-Z0-9]*' -o | tr -d '\n')
+        # Use the fact that we are after some identifier, which is always at the start of the string
+        OLD_APP_ID_PREFIX=$(PlistBuddy -c "Print $APP_ID_KEY" "$APP_ENTITLEMENTS" | grep -E '^[A-Z0-9]*' -o | tr -d '\n')
+        NEW_APP_ID_PREFIX=$(PlistBuddy -c "Print $APP_ID_KEY" "$PROFILE_ENTITLEMENTS" | grep -E '^[A-Z0-9]*' -o | tr -d '\n')
 
         # Get the old and the new team ID
         # Old team ID is not part of app entitlements, have to get it from old embedded provisioning profile
@@ -669,46 +671,62 @@ function resign {
         # Buck changes referenced above are not self-explanatory and do not seem exhaustive or up-to-date
         # Comments below explain the rules applied to each key in order to make realignment with future Xcode export logic easier
         DENYLISTED_KEYS=(\
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.applesignin" \
+            # PP enable all domains via a non-AppStore-compliant '*' value, must use App entitlements value
+            "com.apple.developer.associated-domains" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.associated-domains.mdm-managed" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.authentication-services.autofill-credential-provider" \
+            # This key has an invalid generic value in PP (actual value is set by Xcode during export), see dedicated processing a few blocks below
+            "com.apple.developer.ClassKit-environment" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.default-data-protection" \
+            # This key has an invalid generic value in PP (actual value is set by Xcode during export), see dedicated processing a few blocks below
+            "com.apple.developer.devicecheck.appattest-environment" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.healthkit" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.healthkit.access" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.homekit" \
             # PP list identifiers inconsistent with app-defined ones and this key does not seem to appear in IPA entitlements, so ignore it
             "com.apple.developer.icloud-container-development-container-identifiers" \
             # This key has an invalid generic value in PP (actual value is set by Xcode during export), see dedicated processing a few blocks below
             "com.apple.developer.icloud-container-environment" \
             # PP enable all available services and not app-defined ones, must use App entitlements value
             "com.apple.developer.icloud-services" \
-            # Was already denylisted in previous version, but has someone ever seen this key in a PP?
-            "com.apple.developer.restricted-resource-mode" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.kernel.extended-virtual-addressing" \
+            # Was already denylisted in previous version, seems to be an artifact from an old Xcode release
+            "com.apple.developer.maps" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.networking.HotspotConfiguration" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.networking.multipath" \
+            # PP list all available extensions and not app-defined ones, must use App entitlements value
+            "com.apple.developer.networking.networkextension" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.networking.vpn.api" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.networking.wifi-info" \
             # If actually used by the App, this value will be set in its entitlements
             "com.apple.developer.nfc.readersession.formats" \
+            # Was already denylisted in previous version, but has someone ever seen this key in a PP?
+            "com.apple.developer.restricted-resource-mode" \
             # If actually used by the App, this value will be set in its entitlements
             "com.apple.developer.siri" \
             # PP define a generic TeamID.* identifier and not the app-defined one, must use App entitlements value
             "com.apple.developer.ubiquity-kvstore-identifier" \
             # If actually used by the App, this value will be set in its entitlements
+            "com.apple.developer.user-fonts" \
+            # If actually used by the App, this value will be set in its entitlements
+            "com.apple.external-accessory.wireless-configuration" \
+            # If actually used by the App, this value will be set in its entitlements
             "inter-app-audio" \
             # PP define a generic TeamID.* identifier and not the app-defined one, must use App entitlements value
             "keychain-access-groups" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.homekit" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.healthkit" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.healthkit.access" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.networking.vpn.api" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.networking.HotspotConfiguration" \
-            # PP list all available extensions and not app-defined ones, must use App entitlements value
-            "com.apple.developer.networking.networkextension" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.networking.multipath" \
-            # PP enable all domains via a non-AppStore-compliant '*' value, must use App entitlements value
-            "com.apple.developer.associated-domains" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.developer.default-data-protection" \
-            # Was already denylisted in previous version, seems to be an artifact from an old Xcode release
-            "com.apple.developer.maps" \
-            # If actually used by the App, this value will be set in its entitlements
-            "com.apple.external-accessory.wireless-configuration"
         )
 
         # If we change team while resigning, we have no other choice than to use the following entitlements from the PP instead of the App
@@ -723,11 +741,11 @@ function resign {
             warning "WARNING: Resigned app will allow all pass types from the new team, even if old app only allowed a restricted list"
         else
             DENYLISTED_KEYS+=(\
-                "com.apple.security.application-groups" \
-                "com.apple.developer.in-app-payments" \
-                "com.apple.developer.ubiquity-container-identifiers" \
                 "com.apple.developer.icloud-container-identifiers" \
+                "com.apple.developer.in-app-payments" \
                 "com.apple.developer.pass-type-identifiers" \
+                "com.apple.developer.ubiquity-container-identifiers" \
+                "com.apple.security.application-groups" \
             )
         fi
 
@@ -742,32 +760,40 @@ function resign {
         # Where KEY is the plist key, e.g. "keychain-access-groups"
         # and ID_TYPE is optional part separated by '|' that specifies what value to patch:
         # TEAM_ID - patch the TeamIdentifierPrefix
-        # APP_ID - patch the AppIdentifierPrefix
-        # ICLOUD_ENV - patch the target iCloud Environment
+        # APP_ID_PREFIX - patch the AppIdentifierPrefix
+        # ENV - patch the target Environment
         # Patching means replacing old value from app entitlements with new value from provisioning profile
-        # For example, for KEY=keychain-access-groups the ID_TYPE=APP_ID
+        # For example, for KEY=keychain-access-groups the ID_TYPE=APP_ID_PREFIX
         # Which means that old app ID prefix in keychain-access-groups will be replaced with new app ID prefix
         # There can be only one ID_TYPE specified
         # If entitlements use more than one ID type for single entitlement, then this way of resigning will not work
         # instead an entitlements file must be provided explicitly
         ENTITLEMENTS_TRANSFER_RULES=(\
+            "com.apple.developer.applesignin" \
             "com.apple.developer.associated-domains" \
+            "com.apple.developer.associated-domains.mdm-managed" \
+            "com.apple.developer.authentication-services.autofill-credential-provider" \
+            "com.apple.developer.ClassKit-environment|ENV" \
             "com.apple.developer.default-data-protection" \
+            "com.apple.developer.devicecheck.appattest-environment|ENV" \
             "com.apple.developer.healthkit" \
             "com.apple.developer.healthkit.access" \
             "com.apple.developer.homekit" \
-            "com.apple.developer.icloud-container-environment|ICLOUD_ENV" \
+            "com.apple.developer.icloud-container-environment|ENV" \
             "com.apple.developer.icloud-services" \
+            "com.apple.developer.kernel.extended-virtual-addressing" \
             "com.apple.developer.networking.HotspotConfiguration" \
             "com.apple.developer.networking.multipath" \
             "com.apple.developer.networking.networkextension" \
             "com.apple.developer.networking.vpn.api" \
+            "com.apple.developer.networking.wifi-info" \
             "com.apple.developer.nfc.readersession.formats" \
             "com.apple.developer.siri" \
             "com.apple.developer.ubiquity-kvstore-identifier|TEAM_ID" \
+            "com.apple.developer.user-fonts" \
             "com.apple.external-accessory.wireless-configuration" \
             "inter-app-audio" \
-            "keychain-access-groups|APP_ID" \
+            "keychain-access-groups|APP_ID_PREFIX" \
         )
 
         # If we change team while resigning, we have no other choice than to use the following entitlements from the PP instead of the App
@@ -799,19 +825,19 @@ function resign {
             log "App entitlements value for key '$KEY':"
             log "$ENTITLEMENTS_VALUE"
 
-            # Patch the ID value if specified
-            if [[ "$ID_TYPE" == "APP_ID" ]]; then
-                # Replace old value with new value in patched entitlements
-                log "Replacing old app ID '$OLD_APP_ID' with new app ID '$NEW_APP_ID'"
-                ENTITLEMENTS_VALUE=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e "s/$OLD_APP_ID/$NEW_APP_ID/g")
+            # Patch the value if specified
+            if [[ "$ID_TYPE" == "APP_ID_PREFIX" ]]; then
+                # Replace old app identifier prefix with new value
+                log "Replacing old app ID prefix '$OLD_APP_ID_PREFIX' with new app ID prefix '$NEW_APP_ID_PREFIX'"
+                ENTITLEMENTS_VALUE=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e "s/$OLD_APP_ID_PREFIX/$NEW_APP_ID_PREFIX/g")
             elif [[ "$ID_TYPE" == "TEAM_ID" ]]; then
                 # Replace old team identifier with new value
                 log "Replacing old team ID '$OLD_TEAM_ID' with new team ID '$NEW_TEAM_ID'"
                 ENTITLEMENTS_VALUE=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e "s/$OLD_TEAM_ID/$NEW_TEAM_ID/g")
-            elif [[ "$ID_TYPE" == "ICLOUD_ENV" ]]; then
-                # Add specific iCloud Environment key to patched entitlements
+            elif [[ "$ID_TYPE" == "ENV" ]]; then
+                # Replace specific environment value
                 # This value is set by Xcode during export (manually selected for Development and AdHoc, automatically set to Production for Store)
-                # Would need an additional dedicated option to specify the iCloud environment to be used (Development or Production)
+                # Would need an additional dedicated option to specify the environment to be used (Development or Production)
                 # For now, we assume Production is to be used when signing with a Distribution certificate, Development if not
                 local certificate_name=$CERTIFICATE
                 local sha1_pattern='[0-9A-F]{40}'
@@ -825,14 +851,14 @@ function resign {
                     fi
                 fi
 
-                OLD_ICLOUD_ENV=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e 's,<string>\(.*\)</string>,\1,g')
+                OLD_ENV=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e 's,<string>\(.*\)</string>,\1,g')
                 if [[ "$certificate_name" =~ "Distribution:" ]]; then
-                    NEW_ICLOUD_ENV="Production"
+                    NEW_ENV="Production"
                 else
-                    NEW_ICLOUD_ENV="Development"
+                    NEW_ENV="Development"
                 fi
-                log "Replacing iCloud environment '$OLD_ICLOUD_ENV' with '$NEW_ICLOUD_ENV'"
-                ENTITLEMENTS_VALUE=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e "s/$OLD_ICLOUD_ENV/$NEW_ICLOUD_ENV/g")
+                log "Replacing old environment '$OLD_ENV' with new environment '$NEW_ENV'"
+                ENTITLEMENTS_VALUE=$(echo "$ENTITLEMENTS_VALUE" | /usr/bin/sed -e "s/$OLD_ENV/$NEW_ENV/g")
             fi
 
             # Remove the entry for current key from profisioning profile entitlements (if exists)
